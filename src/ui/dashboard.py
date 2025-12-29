@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from visualization.waveform_plot import WaveformPlot
 from visualization.topomap_enhanced import EnhancedTopoMap
 from visualization.brain_3d import Brain3D, AnimatedBrain3D
+from visualization.brain_anatomical import AnatomicalBrainMap, FastBrainRenderer
 from processing.filters import EEGFilter, FilterSettings
 from processing.spectral import SpectralAnalyzer, BandPower, compute_engagement_index
 from hardware.simulator import EEGSimulator
@@ -110,24 +111,36 @@ class BandPowerWidget(QWidget):
 
 
 class TopoMapWidget(QWidget):
-    """Widget displaying brain topographic map."""
+    """Widget displaying brain topographic map with anatomical detail."""
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.topomap = EnhancedTopoMap()
-        self.style = "modern"  # Options: "modern", "classic", "clinical"
+        self.anatomical_brain = AnatomicalBrainMap(resolution=200)
+        self.simple_topomap = EnhancedTopoMap()
+        self.use_anatomical = True  # Default to anatomical view
         self._init_ui()
         
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         
-        # Title and band selector
+        # Title and controls
         header = QHBoxLayout()
-        title = QLabel("Brain Map")
-        title.setStyleSheet("font-weight: bold; font-size: 12px;")
+        title = QLabel("Brain Activity Map")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
         header.addWidget(title)
         
+        header.addStretch()
+        
+        # Style selector
+        header.addWidget(QLabel("Style:"))
+        self.style_combo = QComboBox()
+        self.style_combo.addItems(["PET Scan", "Hot Metal", "Simple"])
+        self.style_combo.currentTextChanged.connect(self._on_style_changed)
+        header.addWidget(self.style_combo)
+        
+        # Band selector
+        header.addWidget(QLabel("Band:"))
         self.band_combo = QComboBox()
         self.band_combo.addItems(["Alpha", "Beta", "Theta", "Delta", "Gamma"])
         self.band_combo.currentTextChanged.connect(self._on_band_changed)
@@ -137,43 +150,76 @@ class TopoMapWidget(QWidget):
         
         # Image display
         self.image_label = QLabel()
-        self.image_label.setMinimumSize(200, 200)
+        self.image_label.setMinimumSize(350, 350)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label.setStyleSheet("background-color: #1a1a1a; border-radius: 5px;")
+        self.image_label.setStyleSheet("background-color: #000; border-radius: 8px;")
         layout.addWidget(self.image_label)
         
+        # Info label
+        self.info_label = QLabel("Showing real-time brain activity")
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.info_label.setStyleSheet("color: #888; font-size: 10px;")
+        layout.addWidget(self.info_label)
+        
         self.current_band = "alpha"
+        self.current_style = "pet"
         self.current_data = None
         
+    def _on_style_changed(self, text: str):
+        style_map = {"PET Scan": "pet", "Hot Metal": "hot", "Simple": "simple"}
+        self.current_style = style_map.get(text, "pet")
+        self.use_anatomical = self.current_style != "simple"
+        
+        # Recreate brain map with new colormap
+        if self.use_anatomical:
+            cmap = "pet" if self.current_style == "pet" else "hot"
+            self.anatomical_brain = AnatomicalBrainMap(resolution=200, colormap=cmap)
+        
+        if self.current_data is not None:
+            self._render(self.current_data)
+            
     def _on_band_changed(self, text: str):
         self.current_band = text.lower()
         if self.current_data is not None:
             self._render(self.current_data)
             
     def update_data(self, band_powers: dict):
-        """Update topomap with new band power data."""
+        """Update brain map with new band power data."""
         self.current_data = band_powers
         self._render(band_powers)
         
     def _render(self, band_powers: dict):
-        """Render the topomap image."""
+        """Render the brain map image."""
         if self.current_band not in band_powers:
             return
             
         values = band_powers[self.current_band]
         
-        # Get image bytes using enhanced topomap
-        img_bytes = self.topomap.to_image_bytes(
-            values,
-            title=f"{self.current_band.capitalize()} Power",
-            style=self.style,
-            show_electrodes=True,
-            show_names=True,
-            show_colorbar=True,
-            show_gradient_ring=True,
-            figsize=(5, 5),
-            dpi=100
-        )
+        if self.use_anatomical:
+            # Use anatomical brain visualization
+            img_bytes = self.anatomical_brain.to_image_bytes(
+                values,
+                show_anatomy=True,
+                show_electrodes=True,
+                show_names=False,
+                show_colorbar=True,
+                activity_alpha=0.75,
+                figsize=(5, 5),
+                dpi=80,
+                style="dark"
+            )
+        else:
+            # Use simple topomap
+            img_bytes = self.simple_topomap.to_image_bytes(
+                values,
+                title="",
+                style="modern",
+                show_electrodes=True,
+                show_names=True,
+                show_colorbar=True,
+                figsize=(5, 5),
+                dpi=80
+            )
         
         # Convert to QPixmap
         pixmap = QPixmap()
@@ -187,6 +233,7 @@ class TopoMapWidget(QWidget):
         )
         
         self.image_label.setPixmap(scaled)
+        self.info_label.setText(f"{self.current_band.capitalize()} band | {self.current_style.upper()} style")
 
 
 class Brain3DWidget(QWidget):
@@ -727,8 +774,8 @@ class EEGDashboard(QMainWindow):
         # Update sample count
         self.status_widget.set_sample_count(self.sample_count)
         
-        # Update spectral analysis (less frequently)
-        if len(self.data_buffer) >= 256:
+        # Update spectral analysis frequently
+        if len(self.data_buffer) >= 128:  # Reduced from 256
             data = np.array(self.data_buffer)
             
             # Band power for first channel (or average)
@@ -742,24 +789,29 @@ class EEGDashboard(QMainWindow):
             self.status_widget.set_engagement(engagement)
             self.status_widget.set_relaxation(relaxation)
             
-            # Update brain visualizations (every ~0.5 seconds)
-            if self.sample_count % 128 == 0:
+            # Update brain visualizations more frequently (~4-5 FPS)
+            # Update every 32 samples at 256 Hz = ~8 updates/sec
+            if self.sample_count % 32 == 0:
                 band_powers = self.spectral.compute_band_power_multichannel(data)
                 
-                # Update 2D topomap
-                self.topomap_widget.update_data(band_powers)
-                
-                # Update 3D brain (only if tab is visible for performance)
+                # Update 2D brain map (anatomical view)
                 current_tab = self.tab_widget.currentIndex()
+                if current_tab == 1:  # 2D Brain Map tab
+                    self.topomap_widget.update_data(band_powers)
+                
+                # Update 3D brain
                 if current_tab == 2:  # 3D Brain tab
                     self.brain3d_widget.update_data(band_powers, data)
                     
-                # Update quick preview with smaller image
+                # Update quick preview always (it's small/fast)
                 self._update_quick_preview(band_powers)
                 
-                # Update multi-view if that tab is selected
-                if current_tab == 3:  # Multi-view tab
+                # Update multi-view less frequently (expensive)
+                if current_tab == 3 and self.sample_count % 128 == 0:
                     self._update_multiview(band_powers)
+                    
+                # Cache for other tabs
+                self._cached_band_powers = band_powers
                     
     def _update_quick_preview(self, band_powers: dict):
         """Update the small quick preview brain image."""
