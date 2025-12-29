@@ -4,7 +4,7 @@ EEG Dashboard - Main Application Window.
 Integrates all visualization components into a cohesive real-time dashboard:
 - Waveform display (scrolling EEG traces)
 - Spectral analysis (frequency band power)
-- Brain topographic map
+- Brain topographic map (2D and 3D)
 - Recording controls
 """
 
@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QTabWidget, QPushButton, QLabel, QComboBox,
     QSlider, QGroupBox, QStatusBar, QSplitter, QFrame,
-    QFileDialog, QMessageBox, QProgressBar
+    QFileDialog, QMessageBox, QProgressBar, QCheckBox, QSpinBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
@@ -28,7 +28,8 @@ from PyQt6.QtGui import QPixmap, QImage
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from visualization.waveform_plot import WaveformPlot
-from visualization.topomap import TopoMap, BandTopoMaps
+from visualization.topomap_enhanced import EnhancedTopoMap
+from visualization.brain_3d import Brain3D, AnimatedBrain3D
 from processing.filters import EEGFilter, FilterSettings
 from processing.spectral import SpectralAnalyzer, BandPower, compute_engagement_index
 from hardware.simulator import EEGSimulator
@@ -113,7 +114,8 @@ class TopoMapWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.topomap = TopoMap()
+        self.topomap = EnhancedTopoMap()
+        self.style = "modern"  # Options: "modern", "classic", "clinical"
         self._init_ui()
         
     def _init_ui(self):
@@ -160,13 +162,17 @@ class TopoMapWidget(QWidget):
             
         values = band_powers[self.current_band]
         
-        # Get image bytes
+        # Get image bytes using enhanced topomap
         img_bytes = self.topomap.to_image_bytes(
             values,
             title=f"{self.current_band.capitalize()} Power",
+            style=self.style,
             show_electrodes=True,
-            show_colorbar=False,
-            figsize=(4, 4)
+            show_names=True,
+            show_colorbar=True,
+            show_gradient_ring=True,
+            figsize=(5, 5),
+            dpi=100
         )
         
         # Convert to QPixmap
@@ -181,6 +187,152 @@ class TopoMapWidget(QWidget):
         )
         
         self.image_label.setPixmap(scaled)
+
+
+class Brain3DWidget(QWidget):
+    """Widget displaying 3D brain visualization."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.brain_3d = Brain3D()
+        self.animated_brain = AnimatedBrain3D()
+        self.auto_rotate = False
+        self.current_view = 'iso'
+        self.style = "dark"
+        self._init_ui()
+        
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Header with controls
+        header = QHBoxLayout()
+        
+        title = QLabel("3D Brain")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        header.addWidget(title)
+        
+        header.addStretch()
+        
+        # View selector
+        header.addWidget(QLabel("View:"))
+        self.view_combo = QComboBox()
+        self.view_combo.addItems(["Isometric", "Top", "Front", "Left", "Right", "Back"])
+        self.view_combo.currentTextChanged.connect(self._on_view_changed)
+        header.addWidget(self.view_combo)
+        
+        # Auto-rotate checkbox
+        self.rotate_check = QCheckBox("Auto-Rotate")
+        self.rotate_check.stateChanged.connect(self._on_rotate_changed)
+        header.addWidget(self.rotate_check)
+        
+        # Band selector
+        header.addWidget(QLabel("Band:"))
+        self.band_combo = QComboBox()
+        self.band_combo.addItems(["Alpha", "Beta", "Theta", "Delta", "Gamma", "Raw"])
+        self.band_combo.currentTextChanged.connect(self._on_band_changed)
+        header.addWidget(self.band_combo)
+        
+        layout.addLayout(header)
+        
+        # 3D image display
+        self.image_label = QLabel()
+        self.image_label.setMinimumSize(400, 400)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setStyleSheet("background-color: #1a1a2e; border-radius: 8px;")
+        layout.addWidget(self.image_label)
+        
+        # Info label
+        self.info_label = QLabel("Connect to start visualization")
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.info_label.setStyleSheet("color: #888; font-size: 10px;")
+        layout.addWidget(self.info_label)
+        
+        self.current_band = "alpha"
+        self.current_data = None
+        
+        # Rotation timer
+        self.rotation_timer = QTimer()
+        self.rotation_timer.timeout.connect(self._rotate_step)
+        
+    def _on_view_changed(self, text: str):
+        view_map = {
+            "Isometric": "iso",
+            "Top": "top", 
+            "Front": "front",
+            "Left": "left",
+            "Right": "right",
+            "Back": "back"
+        }
+        self.current_view = view_map.get(text, "iso")
+        if self.current_data is not None:
+            self._render(self.current_data)
+            
+    def _on_rotate_changed(self, state):
+        self.auto_rotate = state == Qt.CheckState.Checked.value
+        if self.auto_rotate:
+            self.rotation_timer.start(100)  # 10 FPS rotation
+        else:
+            self.rotation_timer.stop()
+            
+    def _on_band_changed(self, text: str):
+        self.current_band = text.lower()
+        if self.current_data is not None:
+            self._render(self.current_data)
+            
+    def _rotate_step(self):
+        """One step of auto-rotation."""
+        if self.current_data is not None and self.auto_rotate:
+            self._render(self.current_data, rotate=True)
+            
+    def update_data(self, band_powers: dict, raw_data: np.ndarray = None):
+        """Update 3D brain with new data."""
+        self.current_data = band_powers
+        self.raw_data = raw_data
+        if not self.auto_rotate:
+            self._render(band_powers)
+        
+    def _render(self, band_powers: dict, rotate: bool = False):
+        """Render the 3D brain image."""
+        # Get values based on selected band
+        if self.current_band == "raw" and hasattr(self, 'raw_data') and self.raw_data is not None:
+            values = np.std(self.raw_data, axis=0)
+        elif self.current_band in band_powers:
+            values = band_powers[self.current_band]
+        else:
+            return
+        
+        if self.auto_rotate:
+            # Use animated brain for rotation
+            img_bytes = self.animated_brain.get_frame(values, rotate=True)
+        else:
+            # Use static view
+            img_bytes = self.brain_3d.to_image_bytes(
+                values,
+                title="",
+                view=self.current_view,
+                show_electrodes=True,
+                show_names=True,
+                show_head=True,
+                show_brain=True,
+                style=self.style,
+                figsize=(6, 6),
+                dpi=80
+            )
+        
+        # Convert to QPixmap
+        pixmap = QPixmap()
+        pixmap.loadFromData(img_bytes)
+        
+        # Scale to fit
+        scaled = pixmap.scaled(
+            self.image_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        
+        self.image_label.setPixmap(scaled)
+        self.info_label.setText(f"View: {self.current_view.capitalize()} | Band: {self.current_band.capitalize()}")
 
 
 class StatusWidget(QWidget):
@@ -250,7 +402,7 @@ class EEGDashboard(QMainWindow):
         super().__init__()
         
         self.setWindowTitle("EEG Dashboard")
-        self.setMinimumSize(1400, 800)
+        self.setMinimumSize(1400, 900)
         
         # Data source
         self.data_source = None
@@ -278,7 +430,7 @@ class EEGDashboard(QMainWindow):
         self.update_timer.timeout.connect(self._update_display)
         
     def _init_ui(self):
-        """Set up the main user interface."""
+        """Set up the main user interface with tabs."""
         # Central widget
         central = QWidget()
         self.setCentralWidget(central)
@@ -290,45 +442,120 @@ class EEGDashboard(QMainWindow):
         controls = self._create_controls()
         main_layout.addLayout(controls)
         
-        # Main content area with splitter
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Main content: Tab widget + right panel
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
         
-        # Left panel: Waveform
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        # === LEFT: Tab Widget for main visualizations ===
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #444;
+                border-radius: 4px;
+                background-color: #1e1e1e;
+            }
+            QTabBar::tab {
+                background-color: #2a2a2a;
+                color: #aaa;
+                padding: 10px 20px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #1e1e1e;
+                color: white;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover {
+                background-color: #333;
+            }
+        """)
         
-        waveform_group = QGroupBox("EEG Waveforms")
-        waveform_layout = QVBoxLayout(waveform_group)
+        # Tab 1: Waveforms
+        waveform_tab = QWidget()
+        waveform_layout = QVBoxLayout(waveform_tab)
+        waveform_layout.setContentsMargins(5, 5, 5, 5)
+        
         self.waveform = WaveformPlot(sample_rate=256, time_window=10.0)
         waveform_layout.addWidget(self.waveform)
-        left_layout.addWidget(waveform_group)
         
-        splitter.addWidget(left_panel)
+        self.tab_widget.addTab(waveform_tab, "📊 Waveforms")
         
-        # Right panel: Analysis
+        # Tab 2: 2D Brain Map
+        topomap_tab = QWidget()
+        topomap_layout = QVBoxLayout(topomap_tab)
+        topomap_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.topomap_widget = TopoMapWidget()
+        topomap_layout.addWidget(self.topomap_widget)
+        
+        self.tab_widget.addTab(topomap_tab, "🧠 2D Brain Map")
+        
+        # Tab 3: 3D Brain
+        brain3d_tab = QWidget()
+        brain3d_layout = QVBoxLayout(brain3d_tab)
+        brain3d_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.brain3d_widget = Brain3DWidget()
+        brain3d_layout.addWidget(self.brain3d_widget)
+        
+        self.tab_widget.addTab(brain3d_tab, "🎮 3D Brain")
+        
+        # Tab 4: Multi-View
+        multiview_tab = QWidget()
+        multiview_layout = QVBoxLayout(multiview_tab)
+        multiview_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.multiview_label = QLabel("Multi-view will show here when connected")
+        self.multiview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.multiview_label.setMinimumSize(600, 400)
+        self.multiview_label.setStyleSheet("background-color: #1a1a2e; border-radius: 8px; color: #666;")
+        multiview_layout.addWidget(self.multiview_label)
+        
+        self.tab_widget.addTab(multiview_tab, "📐 Multi-View")
+        
+        content_splitter.addWidget(self.tab_widget)
+        
+        # === RIGHT: Status & Analysis Panel ===
         right_panel = QWidget()
+        right_panel.setMaximumWidth(350)
+        right_panel.setMinimumWidth(280)
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(5, 5, 5, 5)
         
         # Status
+        status_group = QGroupBox("Connection Status")
+        status_layout = QVBoxLayout(status_group)
         self.status_widget = StatusWidget()
-        right_layout.addWidget(self.status_widget)
+        status_layout.addWidget(self.status_widget)
+        right_layout.addWidget(status_group)
         
         # Band power
+        band_group = QGroupBox("Frequency Bands")
+        band_layout = QVBoxLayout(band_group)
         self.band_power_widget = BandPowerWidget()
-        right_layout.addWidget(self.band_power_widget)
+        band_layout.addWidget(self.band_power_widget)
+        right_layout.addWidget(band_group)
         
-        # Topomap
-        self.topomap_widget = TopoMapWidget()
-        right_layout.addWidget(self.topomap_widget)
+        # Quick brain preview
+        preview_group = QGroupBox("Quick Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        self.quick_preview = QLabel()
+        self.quick_preview.setMinimumSize(150, 150)
+        self.quick_preview.setMaximumSize(250, 250)
+        self.quick_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.quick_preview.setStyleSheet("background-color: #1a1a2e; border-radius: 5px;")
+        preview_layout.addWidget(self.quick_preview)
+        right_layout.addWidget(preview_group)
         
-        splitter.addWidget(right_panel)
+        right_layout.addStretch()
+        
+        content_splitter.addWidget(right_panel)
         
         # Set splitter proportions
-        splitter.setSizes([1000, 300])
+        content_splitter.setSizes([1100, 300])
         
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(content_splitter)
         
         # Status bar
         self.statusBar().showMessage("Ready - Click 'Connect' to start")
@@ -515,10 +742,78 @@ class EEGDashboard(QMainWindow):
             self.status_widget.set_engagement(engagement)
             self.status_widget.set_relaxation(relaxation)
             
-            # Topomap (update less frequently - every ~0.5 seconds)
+            # Update brain visualizations (every ~0.5 seconds)
             if self.sample_count % 128 == 0:
                 band_powers = self.spectral.compute_band_power_multichannel(data)
+                
+                # Update 2D topomap
                 self.topomap_widget.update_data(band_powers)
+                
+                # Update 3D brain (only if tab is visible for performance)
+                current_tab = self.tab_widget.currentIndex()
+                if current_tab == 2:  # 3D Brain tab
+                    self.brain3d_widget.update_data(band_powers, data)
+                    
+                # Update quick preview with smaller image
+                self._update_quick_preview(band_powers)
+                
+                # Update multi-view if that tab is selected
+                if current_tab == 3:  # Multi-view tab
+                    self._update_multiview(band_powers)
+                    
+    def _update_quick_preview(self, band_powers: dict):
+        """Update the small quick preview brain image."""
+        try:
+            topomap = EnhancedTopoMap()
+            values = band_powers.get('alpha', np.zeros(20))
+            
+            img_bytes = topomap.to_image_bytes(
+                values,
+                style="modern",
+                show_electrodes=False,
+                show_names=False,
+                show_colorbar=False,
+                show_gradient_ring=False,
+                figsize=(2.5, 2.5),
+                dpi=60
+            )
+            
+            pixmap = QPixmap()
+            pixmap.loadFromData(img_bytes)
+            scaled = pixmap.scaled(
+                self.quick_preview.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.quick_preview.setPixmap(scaled)
+        except Exception:
+            pass  # Ignore preview errors
+            
+    def _update_multiview(self, band_powers: dict):
+        """Update the multi-view panel."""
+        try:
+            brain = Brain3D()
+            values = band_powers.get('alpha', np.zeros(20))
+            
+            fig = brain.create_multiview(values, figsize=(12, 4), style="dark")
+            
+            from io import BytesIO
+            buf = BytesIO()
+            fig.savefig(buf, format='png', dpi=80, bbox_inches='tight', facecolor=fig.get_facecolor())
+            import matplotlib.pyplot as plt
+            plt.close(fig)
+            buf.seek(0)
+            
+            pixmap = QPixmap()
+            pixmap.loadFromData(buf.getvalue())
+            scaled = pixmap.scaled(
+                self.multiview_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.multiview_label.setPixmap(scaled)
+        except Exception as e:
+            self.multiview_label.setText(f"Multi-view error: {e}")
                 
     def _on_record(self):
         """Toggle recording."""
