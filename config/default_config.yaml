@@ -1,0 +1,50 @@
+# EEG Dashboard Default Configuration
+
+# Hardware settings
+hardware:
+  # Serial port (null for auto-detect)
+  port: null
+  # Baud rate for serial communication
+  baud_rate: 115200
+  # Number of EEG channels
+  n_channels: 21
+  # Sample rate in Hz
+  sample_rate: 256
+  # Use simulator instead of real hardware
+  use_simulator: true
+
+# Signal processing
+processing:
+  # Bandpass filter range (Hz)
+  bandpass:
+    low: 0.5
+    high: 50.0
+  # Notch filter for line noise (Hz) - set to 50 for EU, 60 for US
+  notch_freq: 60.0
+  # Enable artifact rejection
+  artifact_rejection: true
+
+# Display settings
+display:
+  # Time window for waveform display (seconds)
+  time_window: 10.0
+  # Amplitude scale (microvolts)
+  amplitude_scale: 100.0
+  # Update rate for plots (Hz)
+  refresh_rate: 30
+  # Color scheme: 'dark' or 'light'
+  theme: dark
+
+# Recording settings
+recording:
+  # Default output directory
+  output_dir: ~/eeg_recordings
+  # Default file format: 'edf' or 'csv'
+  format: edf
+
+# Channel display
+channels:
+  # Show all channels or select specific ones
+  show_all: true
+  # Channels to show if not showing all
+  selected: []
