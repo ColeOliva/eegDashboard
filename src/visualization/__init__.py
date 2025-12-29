@@ -14,8 +14,8 @@ def __getattr__(name):
     elif name in ("Brain3D", "AnimatedBrain3D", "ELECTRODE_POSITIONS_3D"):
         from .brain_3d import Brain3D, AnimatedBrain3D, ELECTRODE_POSITIONS_3D
         return locals()[name]
-    elif name in ("AnatomicalBrainMap", "Anatomical3DBrain", "FastBrainRenderer"):
-        from .brain_anatomical import AnatomicalBrainMap, Anatomical3DBrain, FastBrainRenderer
+    elif name in ("AnatomicalBrainMap", "Anatomical3DBrain", "FastBrainRenderer", "load_mri_image"):
+        from .brain_anatomical import AnatomicalBrainMap, Anatomical3DBrain, FastBrainRenderer, load_mri_image
         return locals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -24,5 +24,5 @@ __all__ = [
     "TopoMap", "BandTopoMaps", "ELECTRODE_POSITIONS",
     "EnhancedTopoMap", "RealtimeTopoWidget",
     "Brain3D", "AnimatedBrain3D", "ELECTRODE_POSITIONS_3D",
-    "AnatomicalBrainMap", "Anatomical3DBrain", "FastBrainRenderer",
+    "AnatomicalBrainMap", "Anatomical3DBrain", "FastBrainRenderer", "load_mri_image",
 ]

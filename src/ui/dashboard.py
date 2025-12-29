@@ -118,6 +118,7 @@ class TopoMapWidget(QWidget):
         self.anatomical_brain = AnatomicalBrainMap(resolution=200)
         self.simple_topomap = EnhancedTopoMap()
         self.use_anatomical = True  # Default to anatomical view
+        self.custom_mri_path = None
         self._init_ui()
         
     def _init_ui(self):
@@ -131,6 +132,13 @@ class TopoMapWidget(QWidget):
         header.addWidget(title)
         
         header.addStretch()
+        
+        # Load MRI button
+        self.load_mri_btn = QPushButton("Load MRI")
+        self.load_mri_btn.setMaximumWidth(80)
+        self.load_mri_btn.setToolTip("Load your own MRI/CT scan image")
+        self.load_mri_btn.clicked.connect(self._on_load_mri)
+        header.addWidget(self.load_mri_btn)
         
         # Style selector
         header.addWidget(QLabel("Style:"))
@@ -164,6 +172,33 @@ class TopoMapWidget(QWidget):
         self.current_band = "alpha"
         self.current_style = "pet"
         self.current_data = None
+    
+    def _on_load_mri(self):
+        """Open file dialog to load custom MRI image."""
+        from PyQt6.QtWidgets import QFileDialog
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load MRI/CT Scan Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.tiff *.bmp *.gif);;All Files (*)"
+        )
+        
+        if file_path:
+            try:
+                self.custom_mri_path = file_path
+                self.anatomical_brain.set_mri_image(file_path)
+                self.load_mri_btn.setText("MRI ✓")
+                self.load_mri_btn.setToolTip(f"Using: {file_path}\nClick to change")
+                
+                # Re-render with new MRI
+                if self.current_data is not None:
+                    self._render(self.current_data)
+                    
+                self.info_label.setText(f"Custom MRI loaded | {self.current_band.capitalize()} band")
+            except Exception as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Error", f"Failed to load MRI image:\n{str(e)}")
         
     def _on_style_changed(self, text: str):
         style_map = {"PET Scan": "pet", "Hot Metal": "hot", "Simple": "simple"}

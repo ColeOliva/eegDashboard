@@ -3,10 +3,13 @@ Anatomical Brain Visualization.
 
 Creates realistic brain visualizations with actual anatomical structure,
 similar to PET/fMRI scans, with EEG activity overlaid as a heatmap.
+
+Supports loading custom MRI/CT scan images as the brain overlay.
 """
 
 import numpy as np
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Union
+from pathlib import Path
 from scipy.interpolate import Rbf, griddata
 from scipy.ndimage import gaussian_filter, zoom
 import matplotlib
@@ -14,9 +17,76 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Circle, Ellipse, Polygon, FancyBboxPatch
-from matplotlib.path import Path
+from matplotlib.path import Path as MplPath
 from matplotlib.patches import PathPatch
 from io import BytesIO
+
+
+def load_mri_image(
+    image_path: Union[str, Path],
+    resolution: int = 300,
+    grayscale: bool = False,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load an MRI/CT scan image and prepare it for brain overlay.
+    
+    Args:
+        image_path: Path to the MRI image (PNG, JPEG, TIFF, etc.)
+        resolution: Target resolution to resize to
+        grayscale: If True, convert to grayscale
+        
+    Returns:
+        Tuple of (brain_image_rgb, brain_mask)
+        - brain_image_rgb: RGB image array normalized to [0, 1]
+        - brain_mask: Boolean mask of brain region
+    """
+    from PIL import Image
+    
+    # Load image
+    img = Image.open(image_path)
+    
+    # Convert to RGB if needed
+    if img.mode == 'RGBA':
+        # Handle transparency - use alpha channel for mask
+        img_array = np.array(img)
+        alpha = img_array[:, :, 3] / 255.0
+        img = img.convert('RGB')
+    elif img.mode == 'L':
+        # Grayscale - convert to RGB
+        img = img.convert('RGB')
+    elif img.mode != 'RGB':
+        img = img.convert('RGB')
+    
+    # Resize to target resolution (square)
+    img = img.resize((resolution, resolution), Image.Resampling.LANCZOS)
+    
+    # Convert to numpy array and normalize
+    img_array = np.array(img).astype(np.float32) / 255.0
+    
+    if grayscale:
+        # Convert to grayscale but keep 3 channels
+        gray = 0.299 * img_array[:, :, 0] + 0.587 * img_array[:, :, 1] + 0.114 * img_array[:, :, 2]
+        img_array = np.stack([gray, gray, gray], axis=2)
+    
+    # Create brain mask from image intensity
+    # Assumes brain is brighter than background
+    intensity = np.mean(img_array, axis=2)
+    
+    # Use Otsu-like thresholding
+    threshold = np.percentile(intensity[intensity > 0.05], 10)
+    brain_mask = intensity > threshold
+    
+    # Clean up mask with morphological operations
+    from scipy.ndimage import binary_fill_holes, binary_erosion, binary_dilation
+    brain_mask = binary_fill_holes(brain_mask)
+    brain_mask = binary_erosion(brain_mask, iterations=2)
+    brain_mask = binary_dilation(brain_mask, iterations=2)
+    
+    # Flip vertically to match coordinate system (y increases upward)
+    img_array = np.flipud(img_array)
+    brain_mask = np.flipud(brain_mask)
+    
+    return img_array, brain_mask
 
 
 # Standard 10-20 electrode positions (normalized to brain image coordinates)
@@ -324,6 +394,7 @@ class AnatomicalBrainMap:
     Creates anatomically realistic brain maps with EEG activity overlay.
     
     Similar to PET/fMRI visualizations with actual brain structure visible.
+    Supports loading custom MRI/CT scan images.
     """
     
     def __init__(
@@ -331,6 +402,7 @@ class AnatomicalBrainMap:
         channel_names: Optional[List[str]] = None,
         resolution: int = 300,
         colormap: str = "pet",
+        mri_image_path: Optional[Union[str, Path]] = None,
     ):
         """
         Initialize anatomical brain map.
@@ -339,9 +411,14 @@ class AnatomicalBrainMap:
             channel_names: Channel names in data order.
             resolution: Image resolution.
             colormap: 'pet', 'hot', or matplotlib colormap name.
+            mri_image_path: Optional path to custom MRI/CT scan image.
+                           If provided, this will be used instead of the
+                           generated brain anatomy. Should be a top-down
+                           (axial) view of the brain.
         """
         self.channel_names = channel_names or STANDARD_CHANNEL_ORDER
         self.resolution = resolution
+        self.mri_image_path = mri_image_path
         
         # Set up colormap
         if colormap == "pet":
@@ -364,13 +441,43 @@ class AnatomicalBrainMap:
         
         self.positions = np.array(self.positions)
         
-        # Generate brain anatomy (RGB and grayscale)
-        self.brain_img_rgb, self.brain_mask, self.brain_img = generate_brain_slice("axial", resolution)
+        # Load brain anatomy - either custom MRI or generated
+        if mri_image_path is not None:
+            self._load_custom_mri(mri_image_path)
+        else:
+            # Generate brain anatomy (RGB and grayscale)
+            self.brain_img_rgb, self.brain_mask, self.brain_img = generate_brain_slice("axial", resolution)
         
         # Create interpolation grid
         x = np.linspace(-1, 1, resolution)
         y = np.linspace(-1, 1, resolution)
         self.grid_x, self.grid_y = np.meshgrid(x, y)
+    
+    def _load_custom_mri(self, image_path: Union[str, Path]):
+        """Load a custom MRI image as the brain overlay."""
+        self.brain_img_rgb, self.brain_mask = load_mri_image(
+            image_path, 
+            resolution=self.resolution,
+            grayscale=False
+        )
+        # Create grayscale version
+        self.brain_img = np.mean(self.brain_img_rgb, axis=2)
+        print(f"Loaded custom MRI from: {image_path}")
+    
+    def set_mri_image(self, image_path: Union[str, Path]):
+        """
+        Change the MRI image at runtime.
+        
+        Args:
+            image_path: Path to new MRI/CT scan image
+        """
+        self.mri_image_path = image_path
+        self._load_custom_mri(image_path)
+    
+    def reset_to_generated(self):
+        """Reset to using the generated brain anatomy instead of custom MRI."""
+        self.mri_image_path = None
+        self.brain_img_rgb, self.brain_mask, self.brain_img = generate_brain_slice("axial", self.resolution)
         
     def interpolate_activity(self, values: np.ndarray, smoothing: float = 2.0) -> np.ndarray:
         """Interpolate electrode values to brain surface."""
