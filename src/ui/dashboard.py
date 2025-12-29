@@ -203,7 +203,7 @@ class TopoMapWidget(QWidget):
                 show_electrodes=True,
                 show_names=False,
                 show_colorbar=True,
-                activity_alpha=0.75,
+                activity_alpha=0.5,  # Lower alpha to show brain structure clearly
                 figsize=(5, 5),
                 dpi=80,
                 style="dark"
@@ -775,7 +775,7 @@ class EEGDashboard(QMainWindow):
         self.status_widget.set_sample_count(self.sample_count)
         
         # Update spectral analysis frequently
-        if len(self.data_buffer) >= 128:  # Reduced from 256
+        if len(self.data_buffer) >= 64:  # Reduced for faster updates
             data = np.array(self.data_buffer)
             
             # Band power for first channel (or average)
@@ -789,9 +789,9 @@ class EEGDashboard(QMainWindow):
             self.status_widget.set_engagement(engagement)
             self.status_widget.set_relaxation(relaxation)
             
-            # Update brain visualizations more frequently (~4-5 FPS)
-            # Update every 32 samples at 256 Hz = ~8 updates/sec
-            if self.sample_count % 32 == 0:
+            # Update brain visualizations very frequently (~16 FPS)
+            # Update every 16 samples at 256 Hz = ~16 updates/sec
+            if self.sample_count % 16 == 0:
                 band_powers = self.spectral.compute_band_power_multichannel(data)
                 
                 # Update 2D brain map (anatomical view)
@@ -799,15 +799,15 @@ class EEGDashboard(QMainWindow):
                 if current_tab == 1:  # 2D Brain Map tab
                     self.topomap_widget.update_data(band_powers)
                 
-                # Update 3D brain
-                if current_tab == 2:  # 3D Brain tab
+                # Update 3D brain (slightly less frequent - 3D is expensive)
+                if current_tab == 2 and self.sample_count % 32 == 0:  # 3D Brain tab
                     self.brain3d_widget.update_data(band_powers, data)
                     
                 # Update quick preview always (it's small/fast)
                 self._update_quick_preview(band_powers)
                 
                 # Update multi-view less frequently (expensive)
-                if current_tab == 3 and self.sample_count % 128 == 0:
+                if current_tab == 3 and self.sample_count % 64 == 0:
                     self._update_multiview(band_powers)
                     
                 # Cache for other tabs

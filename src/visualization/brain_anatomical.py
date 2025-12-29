@@ -182,7 +182,14 @@ def generate_brain_slice(
     resolution: int = 200
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Generate a realistic brain slice image.
+    Generate a highly detailed realistic brain slice image.
+    
+    Creates an MRI-like brain slice with clearly visible anatomical structures:
+    - Gray matter (cortex) with gyri and sulci
+    - White matter (internal)
+    - Ventricles
+    - Corpus callosum
+    - Central structures
     
     Args:
         view: Slice orientation ('axial', 'coronal', 'sagittal')
@@ -194,46 +201,122 @@ def generate_brain_slice(
     
     if view == "axial":
         # Top-down view (most common for EEG)
-        # Outer brain boundary
-        brain_outline = (X**2 / 0.82**2 + Y**2 / 0.92**2) <= 1
         
-        # Inner structures
-        # Lateral ventricles (butterfly shape)
-        vent_left = ((X + 0.15)**2 / 0.12**2 + Y**2 / 0.25**2) <= 1
-        vent_right = ((X - 0.15)**2 / 0.12**2 + Y**2 / 0.25**2) <= 1
-        ventricles = (vent_left | vent_right) & (np.abs(Y) < 0.3)
+        # Outer brain boundary (slightly irregular for realism)
+        boundary_mod = 0.02 * np.sin(12 * np.arctan2(Y, X))
+        brain_outline = (X**2 / (0.82 + boundary_mod)**2 + Y**2 / (0.92 + boundary_mod)**2) <= 1
         
-        # Central structures (thalamus, etc.)
-        central = (X**2 + Y**2) < 0.15**2
+        # CSF space (thin layer around brain)
+        csf_outer = (X**2 / 0.86**2 + Y**2 / 0.96**2) <= 1
+        csf_space = csf_outer & ~brain_outline
         
-        # Gray matter (cortex) - outer ring
-        inner_boundary = (X**2 / 0.65**2 + Y**2 / 0.75**2) <= 1
+        # Lateral ventricles (butterfly/horn shape)
+        # Anterior horns (front)
+        vent_ant_l = ((X + 0.12)**2 / 0.06**2 + (Y - 0.15)**2 / 0.12**2) <= 1
+        vent_ant_r = ((X - 0.12)**2 / 0.06**2 + (Y - 0.15)**2 / 0.12**2) <= 1
+        # Body of ventricles
+        vent_body_l = ((X + 0.18)**2 / 0.08**2 + Y**2 / 0.18**2) <= 1
+        vent_body_r = ((X - 0.18)**2 / 0.08**2 + Y**2 / 0.18**2) <= 1
+        # Posterior horns (back)  
+        vent_post_l = ((X + 0.15)**2 / 0.05**2 + (Y + 0.2)**2 / 0.10**2) <= 1
+        vent_post_r = ((X - 0.15)**2 / 0.05**2 + (Y + 0.2)**2 / 0.10**2) <= 1
+        
+        ventricles = (vent_ant_l | vent_ant_r | vent_body_l | vent_body_r | 
+                     vent_post_l | vent_post_r) & (np.abs(Y) < 0.35)
+        
+        # Third ventricle (midline)
+        third_vent = (np.abs(X) < 0.02) & (Y > -0.1) & (Y < 0.2)
+        ventricles = ventricles | third_vent
+        
+        # Central structures (thalamus, basal ganglia)
+        thalamus_l = ((X + 0.12)**2 + (Y + 0.02)**2) < 0.08**2
+        thalamus_r = ((X - 0.12)**2 + (Y + 0.02)**2) < 0.08**2
+        caudate_l = ((X + 0.18)**2 / 0.04**2 + (Y - 0.08)**2 / 0.08**2) <= 1
+        caudate_r = ((X - 0.18)**2 / 0.04**2 + (Y - 0.08)**2 / 0.08**2) <= 1
+        putamen_l = ((X + 0.25)**2 / 0.05**2 + Y**2 / 0.12**2) <= 1
+        putamen_r = ((X - 0.25)**2 / 0.05**2 + Y**2 / 0.12**2) <= 1
+        deep_gray = thalamus_l | thalamus_r | caudate_l | caudate_r | putamen_l | putamen_r
+        
+        # Corpus callosum (connects hemispheres)
+        corpus = (np.abs(X) < 0.25) & (np.abs(Y) < 0.08) & ~ventricles
+        
+        # White matter boundary (more detailed)
+        wm_mod = 0.03 * np.sin(8 * np.arctan2(Y, X))
+        inner_boundary = (X**2 / (0.55 + wm_mod)**2 + Y**2 / (0.65 + wm_mod)**2) <= 1
+        
+        # Gray matter (cortex) - outer region with gyri/sulci
         gray_matter = brain_outline & ~inner_boundary
         
-        # White matter
-        white_matter = inner_boundary & ~ventricles & ~central
+        # White matter - inner region
+        white_matter = inner_boundary & ~ventricles & ~deep_gray
         
-        # Create intensity image
-        brain_img = np.zeros((resolution, resolution))
-        brain_img[brain_outline] = 0.3  # Base
-        brain_img[white_matter] = 0.5   # White matter
-        brain_img[gray_matter] = 0.7    # Gray matter (cortex)
-        brain_img[ventricles] = 0.1     # CSF (dark)
-        brain_img[central] = 0.4        # Deep structures
+        # Create detailed intensity image
+        brain_img = np.zeros((resolution, resolution, 3), dtype=np.float32)
         
-        # Add sulci texture to gray matter
+        # Background (dark)
+        brain_img[:, :] = [0.05, 0.05, 0.08]
+        
+        # CSF (dark, slightly blue)
+        brain_img[csf_space] = [0.1, 0.12, 0.15]
+        
+        # Base brain structure
+        brain_img[brain_outline] = [0.35, 0.32, 0.30]
+        
+        # White matter (bright, slightly warm)
+        brain_img[white_matter] = [0.85, 0.82, 0.78]
+        
+        # Corpus callosum (bright white)
+        brain_img[corpus & ~ventricles] = [0.95, 0.93, 0.90]
+        
+        # Gray matter (medium gray, cooler)
+        brain_img[gray_matter] = [0.55, 0.52, 0.50]
+        
+        # Deep gray matter structures (darker gray)
+        brain_img[deep_gray] = [0.45, 0.43, 0.42]
+        
+        # Ventricles (very dark - CSF)
+        brain_img[ventricles] = [0.08, 0.10, 0.12]
+        
+        # Add detailed sulci texture to gray matter
         texture, _ = generate_brain_texture(resolution)
-        brain_img[gray_matter] += texture[gray_matter] * 0.2
         
-        # Smooth transitions
-        brain_img = gaussian_filter(brain_img, sigma=1.5)
-        brain_img[~brain_outline] = 0
+        # Create sulci pattern (darker lines in gray matter)
+        sulci_threshold = 0.4
+        sulci_mask = (texture < sulci_threshold) & gray_matter
+        
+        # Darken sulci
+        brain_img[sulci_mask] *= 0.6
+        
+        # Add subtle variation to white matter
+        wm_variation = gaussian_filter(np.random.randn(resolution, resolution), sigma=8) * 0.05
+        brain_img[white_matter, 0] += wm_variation[white_matter]
+        brain_img[white_matter, 1] += wm_variation[white_matter]
+        brain_img[white_matter, 2] += wm_variation[white_matter]
+        
+        # Add fiber tract hints in white matter
+        fiber_pattern = np.sin(20 * X) * np.cos(15 * Y) * 0.03
+        brain_img[white_matter, 0] += fiber_pattern[white_matter]
+        brain_img[white_matter, 1] += fiber_pattern[white_matter]
+        
+        # Smooth the whole image slightly
+        for c in range(3):
+            brain_img[:, :, c] = gaussian_filter(brain_img[:, :, c], sigma=0.8)
+        
+        # Ensure values in range
+        brain_img = np.clip(brain_img, 0, 1)
+        
+        # Create grayscale version for compatibility
+        brain_gray = np.mean(brain_img, axis=2)
+        brain_gray[~brain_outline] = 0
         
     else:
         # Simplified for other views
-        brain_img, brain_outline = generate_brain_texture(resolution)
+        texture, brain_outline = generate_brain_texture(resolution)
+        brain_gray = texture
+        brain_img = np.stack([texture, texture, texture], axis=2)
+        brain_img[~brain_outline] = 0
     
-    return brain_img, brain_outline
+    return brain_img, brain_outline, brain_gray
 
 
 class AnatomicalBrainMap:
@@ -281,8 +364,8 @@ class AnatomicalBrainMap:
         
         self.positions = np.array(self.positions)
         
-        # Generate brain anatomy
-        self.brain_img, self.brain_mask = generate_brain_slice("axial", resolution)
+        # Generate brain anatomy (RGB and grayscale)
+        self.brain_img_rgb, self.brain_mask, self.brain_img = generate_brain_slice("axial", resolution)
         
         # Create interpolation grid
         x = np.linspace(-1, 1, resolution)
@@ -330,22 +413,25 @@ class AnatomicalBrainMap:
         show_names: bool = False,
         show_regions: bool = False,
         show_colorbar: bool = True,
-        activity_alpha: float = 0.7,
+        activity_alpha: float = 0.55,
         figsize: Tuple[float, float] = (8, 8),
         style: str = "dark",
     ) -> plt.Figure:
         """
         Create an anatomical brain map with activity overlay.
         
+        The brain anatomy is ALWAYS visible underneath the activity heatmap.
+        Activity colors are blended with the anatomical structure.
+        
         Args:
             values: Array of values for each channel.
             title: Plot title.
-            show_anatomy: Show underlying brain structure.
+            show_anatomy: Show underlying brain structure (always recommended).
             show_electrodes: Show electrode positions.
             show_names: Show electrode labels.
             show_regions: Show brain region labels.
             show_colorbar: Show activity colorbar.
-            activity_alpha: Transparency of activity overlay.
+            activity_alpha: Transparency of activity overlay (lower = more brain visible).
             figsize: Figure size.
             style: 'dark' or 'light' theme.
         """
@@ -355,61 +441,79 @@ class AnatomicalBrainMap:
         # Normalize activity
         vmin = np.nanpercentile(activity, 5)
         vmax = np.nanpercentile(activity, 95)
+        if vmax <= vmin:
+            vmax = vmin + 1
         
         # Set up figure
         if style == "dark":
-            fig, ax = plt.subplots(figsize=figsize, facecolor='black')
-            ax.set_facecolor('black')
+            fig, ax = plt.subplots(figsize=figsize, facecolor='#0a0a0f')
+            ax.set_facecolor('#0a0a0f')
             text_color = 'white'
-            anatomy_cmap = 'gray'
         else:
-            fig, ax = plt.subplots(figsize=figsize, facecolor='#1a1a1a')
-            ax.set_facecolor('#1a1a1a')
+            fig, ax = plt.subplots(figsize=figsize, facecolor='#1a1a2e')
+            ax.set_facecolor('#1a1a2e')
             text_color = 'white'
-            anatomy_cmap = 'gray'
         
         ax.set_aspect('equal')
         ax.set_xlim(-1.15, 1.15)
         ax.set_ylim(-1.15, 1.15)
         ax.axis('off')
         
-        # Draw brain anatomy (grayscale base)
+        # FIRST: Draw the anatomical brain (RGB image) as the base
         if show_anatomy:
+            # Show the full-color MRI-style brain image
             ax.imshow(
-                self.brain_img,
+                self.brain_img_rgb,
                 extent=[-1, 1, -1, 1],
                 origin='lower',
-                cmap=anatomy_cmap,
-                alpha=0.6,
-                vmin=0, vmax=1
+                alpha=1.0,  # Full opacity for base brain
+                interpolation='bilinear'
             )
         
-        # Draw activity overlay
+        # SECOND: Normalize activity to 0-1 for colormap
+        activity_norm = (activity - vmin) / (vmax - vmin)
+        activity_norm = np.clip(activity_norm, 0, 1)
+        
+        # Create RGBA activity overlay
+        activity_rgba = self._colormap(activity_norm)
+        
+        # Make background transparent (where no brain)
+        activity_rgba[~self.brain_mask] = [0, 0, 0, 0]
+        
+        # Set alpha channel for activity overlay
+        activity_rgba[:, :, 3] = np.where(self.brain_mask, activity_alpha, 0)
+        
+        # Draw activity overlay on top of brain
         im = ax.imshow(
-            activity,
+            activity_rgba,
             extent=[-1, 1, -1, 1],
             origin='lower',
-            cmap=self._colormap,
-            alpha=activity_alpha,
-            vmin=vmin, vmax=vmax
+            interpolation='bilinear'
         )
+        
+        # Create a dummy mappable for colorbar
+        sm = plt.cm.ScalarMappable(cmap=self._colormap, norm=Normalize(vmin=vmin, vmax=vmax))
+        sm.set_array([])
         
         # Draw brain outline
         theta = np.linspace(0, 2*np.pi, 100)
         ax.plot(0.85 * np.cos(theta), 0.95 * np.sin(theta), 
-                color=text_color, linewidth=1.5, alpha=0.5)
+                color=text_color, linewidth=2, alpha=0.7)
         
-        # Draw nose indicator
+        # Draw nose indicator (pointing up = front of brain)
         nose_x = [0, -0.08, 0, 0.08, 0]
         nose_y = [0.95, 1.02, 1.1, 1.02, 0.95]
-        ax.plot(nose_x, nose_y, color=text_color, linewidth=2)
+        ax.fill(nose_x, nose_y, color=text_color, alpha=0.6)
+        ax.text(0, 1.12, 'Front', fontsize=8, ha='center', color=text_color, alpha=0.5)
         
         # Draw ears
         ear_theta = np.linspace(-np.pi/2, np.pi/2, 20)
-        ax.plot(-0.88 + 0.08*np.cos(ear_theta), 0.12*np.sin(ear_theta),
-                color=text_color, linewidth=2)
-        ax.plot(0.88 - 0.08*np.cos(ear_theta), 0.12*np.sin(ear_theta),
-                color=text_color, linewidth=2)
+        ax.fill(-0.88 + 0.08*np.cos(ear_theta), 0.12*np.sin(ear_theta),
+                color=text_color, alpha=0.4)
+        ax.fill(0.88 - 0.08*np.cos(ear_theta), 0.12*np.sin(ear_theta),
+                color=text_color, alpha=0.4)
+        ax.text(-0.98, 0, 'L', fontsize=9, ha='center', va='center', color=text_color, alpha=0.5)
+        ax.text(0.98, 0, 'R', fontsize=9, ha='center', va='center', color=text_color, alpha=0.5)
         
         # Draw electrodes
         if show_electrodes:
@@ -418,25 +522,31 @@ class AnatomicalBrainMap:
                 norm_val = (val - vmin) / (vmax - vmin) if vmax > vmin else 0.5
                 color = self._colormap(np.clip(norm_val, 0, 1))
                 
-                # Electrode marker with glow
-                ax.scatter(pos[0], pos[1], s=80, c=[color], 
+                # Electrode marker with glow effect
+                ax.scatter(pos[0], pos[1], s=120, c='white', alpha=0.3, zorder=9)  # glow
+                ax.scatter(pos[0], pos[1], s=70, c=[color], 
                           edgecolors='white', linewidths=1.5, zorder=10)
                 
                 if show_names:
-                    ax.text(pos[0], pos[1] + 0.08, name, fontsize=7,
-                           ha='center', color=text_color, fontweight='bold')
+                    ax.text(pos[0], pos[1] + 0.09, name, fontsize=7,
+                           ha='center', color=text_color, fontweight='bold',
+                           bbox=dict(boxstyle='round,pad=0.15', facecolor='black', 
+                                    alpha=0.5, edgecolor='none'))
         
         # Draw region labels
         if show_regions:
             for region_name, region_info in BRAIN_REGIONS.items():
                 cx, cy = region_info["center"]
-                ax.text(cx, cy, region_name.replace(" (L)", "\n(Left)").replace(" (R)", "\n(Right)"),
-                       fontsize=8, ha='center', va='center',
-                       color=text_color, alpha=0.6, style='italic')
+                short_name = region_name.split()[0]
+                ax.text(cx, cy, short_name,
+                       fontsize=9, ha='center', va='center',
+                       color='white', alpha=0.7, fontweight='bold',
+                       bbox=dict(boxstyle='round,pad=0.2', facecolor='black', 
+                                alpha=0.4, edgecolor='none'))
         
         # Colorbar
         if show_colorbar:
-            cbar = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.02, aspect=30)
+            cbar = fig.colorbar(sm, ax=ax, shrink=0.6, pad=0.02, aspect=30)
             cbar.ax.tick_params(labelsize=9, colors=text_color)
             cbar.outline.set_edgecolor(text_color)
             cbar.ax.set_ylabel('Activity (µV)', fontsize=10, 
