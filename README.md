@@ -7,11 +7,21 @@ A real-time EEG visualization and analysis dashboard for 25-pin connector EEG ca
 
 ## Features
 
+### Visualization
 - **Real-time waveform display** - Scrolling EEG traces for all channels
-- **Brain topographic map** - 2D scalp heatmap showing activity distribution  
-- **Frequency band analysis** - Delta, Theta, Alpha, Beta, Gamma power
+- **2D Brain topographic map** - Scalp heatmap with anatomical brain overlay
+- **3D Brain visualization** - Rotating 3D brain surface with activity mapping
+- **Anatomical brain rendering** - MRI-style brain structure (white matter, gray matter, ventricles)
+- **Custom MRI support** - Load your own MRI/CT scan as the brain overlay
+- **Multiple colormaps** - PET scan (rainbow), Hot Metal, or simple styles
+
+### Analysis
+- **Frequency band analysis** - Delta, Theta, Alpha, Beta, Gamma power bars
+- **Cognitive indices** - Real-time engagement and relaxation metrics
 - **10-20 electrode system** - Standard international EEG placement
 - **Signal processing** - Bandpass filter, notch filter, artifact rejection
+
+### Data & Recording
 - **Data recording** - Save to CSV, EDF, or NumPy formats
 - **Simulation mode** - Test without hardware using realistic synthetic EEG
 
@@ -61,12 +71,33 @@ This runs all component tests without launching the graphical interface.
 
 ## Usage
 
-### Dashboard Controls
+### Dashboard Tabs
 
-1. **Source Selection** - Choose between Simulator or Serial port
-2. **Connect/Disconnect** - Start/stop data acquisition  
-3. **Record** - Begin recording EEG data
-4. **Save** - Export recording to CSV or EDF format
+1. **Waveforms** - Real-time scrolling EEG traces for all channels
+2. **2D Brain Map** - Topographic brain activity with anatomical overlay
+3. **3D Brain** - Rotating 3D brain surface visualization
+4. **Multi-View** - Combined view of all frequency bands
+
+### Brain Map Controls
+
+- **Style selector** - Choose visualization style:
+  - *PET Scan* - Rainbow colormap with anatomical brain structure
+  - *Hot Metal* - Medical thermal imaging style
+  - *Simple* - Clean, minimal heatmap
+- **Band selector** - Display Alpha, Beta, Theta, Delta, or Gamma activity
+- **Load MRI** - Import your own MRI/CT scan image as the brain overlay
+
+### 3D Brain Controls
+
+- **View selector** - Isometric, Top, Front, Left, Right, Back views
+- **Auto-Rotate** - Enable continuous rotation
+- **Band selector** - Choose which frequency band to visualize
+
+### Recording & Export
+
+1. **Connect** - Start data acquisition from simulator or hardware
+2. **Record** - Begin recording EEG data  
+3. **Save** - Export recording to CSV or EDF format
 
 ### With Your EEG Hardware
 
@@ -94,10 +125,10 @@ processing:
 
 ```
 eegDashboard/
-├── main.py                    # Entry point
-├── requirements.txt           # Python dependencies
+├── main.py                      # Entry point
+├── requirements.txt             # Python dependencies
 ├── config/
-│   └── default_config.yaml    # Configuration file
+│   └── default_config.yaml      # Configuration file
 ├── src/
 │   ├── hardware/
 │   │   ├── serial_interface.py  # USB/serial communication
@@ -110,9 +141,12 @@ eegDashboard/
 │   │   └── data_export.py       # CSV/EDF export
 │   ├── visualization/
 │   │   ├── waveform_plot.py     # Scrolling traces
-│   │   └── topomap.py           # Brain heatmap
+│   │   ├── topomap.py           # Basic brain heatmap
+│   │   ├── topomap_enhanced.py  # Enhanced 2D topomap
+│   │   ├── brain_3d.py          # 3D brain visualization
+│   │   └── brain_anatomical.py  # Anatomical brain + MRI support
 │   └── ui/
-│       └── dashboard.py         # Main GUI window
+│       └── dashboard.py         # Main GUI window (tabbed interface)
 └── tests/                       # Unit tests
 ```
 
@@ -161,13 +195,27 @@ European Data Format - standard for EEG, compatible with:
 ## Dependencies
 
 - **PyQt6** - GUI framework
-- **pyqtgraph** - Fast plotting
+- **pyqtgraph** - Fast real-time plotting
 - **numpy** - Numerical computing
-- **scipy** - Signal processing
-- **matplotlib** - Topographic maps
+- **scipy** - Signal processing & interpolation
+- **matplotlib** - Topographic maps & brain visualization
+- **Pillow** - Custom MRI image loading
 - **pyserial** - Serial communication
 - **pyedflib** - EDF file format
 - **mne** - EEG analysis toolkit
+
+## Custom MRI Support
+
+You can load your own MRI or CT scan image as the brain overlay:
+
+1. Click the **"Load MRI"** button in the 2D Brain Map tab
+2. Select your image file (PNG, JPEG, TIFF, or BMP)
+3. The activity heatmap will overlay on your custom brain image
+
+**Best results with:**
+- Axial (top-down) MRI T1/T2 slices
+- CT scans showing brain structure
+- Images with good contrast between brain and background
 
 ## Troubleshooting
 
